@@ -13,6 +13,7 @@ from bert import BertModel
 from optimizer import AdamW
 from tqdm import tqdm
 
+print("v7")
 
 TQDM_DISABLE=False
 # fix the random seed
@@ -45,8 +46,8 @@ class BertSentimentClassifier(torch.nn.Module):
                 param.requires_grad = True
 
         ### TODO
-        raise NotImplementedError
-
+        # Test without dropout
+        self.out = torch.nn.Linear(self.bert.config.hidden_size, self.num_labels)
 
     def forward(self, input_ids, attention_mask):
         '''Takes a batch of sentences and returns logits for sentiment classes'''
@@ -54,9 +55,12 @@ class BertSentimentClassifier(torch.nn.Module):
         # HINT: you should consider what is the appropriate output to return given that
         # the training loop currently uses F.cross_entropy as the loss function.
         ### TODO
-        raise NotImplementedError
-
-
+        # Pretrain with BERT
+        bert_output = self.bert(input_ids, attention_mask)
+        pooler_output = bert_output["pooler_output"]
+        # Finetuning layer
+        output = self.out(pooler_output)
+        return F.softmax(output, dim=1)
 
 class SentimentDataset(Dataset):
     def __init__(self, dataset, args):
@@ -296,7 +300,7 @@ def train(args):
 def test(args):
     with torch.no_grad():
         device = torch.device('cuda') if args.use_gpu else torch.device('cpu')
-        saved = torch.load(args.filepath)
+        saved = torch.load(args.filepath, map_location=torch.device("cpu"))
         config = saved['model_config']
         model = BertSentimentClassifier(config)
         model.load_state_dict(saved['model'])
@@ -340,7 +344,7 @@ def get_args():
     parser.add_argument("--batch_size", help='sst: 64, cfimdb: 8 can fit a 12GB GPU', type=int, default=8)
     parser.add_argument("--hidden_dropout_prob", type=float, default=0.3)
     parser.add_argument("--lr", type=float, help="learning rate, default lr for 'pretrain': 1e-3, 'finetune': 1e-5",
-                        default=1e-5)
+                        default=1e-3)
 
     args = parser.parse_args()
     return args

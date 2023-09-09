@@ -16,7 +16,7 @@ explicitly aside from model_eval_multitask.
 '''
 
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, RandomSampler
 from sklearn.metrics import classification_report, f1_score, recall_score, accuracy_score
 from tqdm import tqdm
 import numpy as np
@@ -25,8 +25,9 @@ from datasets import load_multitask_data, load_multitask_test_data, \
     SentenceClassificationDataset, SentenceClassificationTestDataset, \
     SentencePairDataset, SentencePairTestDataset
 
+print("v11")
 
-TQDM_DISABLE = True
+TQDM_DISABLE = False
 
 # Evaluate a multitask model for accuracy.on SST only.
 def model_eval_sst(dataloader, model, device):
@@ -56,6 +57,78 @@ def model_eval_sst(dataloader, model, device):
     acc = accuracy_score(y_true, y_pred)
 
     return acc, f1, y_pred, y_true, sents, sent_ids
+
+# Evaluate a multitask model for accuracy.on Quora only.
+def model_eval_para(paraphrase_dataloader, model, device):
+    model.eval()  # switch to eval model, will turn off randomness like dropout
+
+    with torch.no_grad():
+        para_y_true = []
+        para_y_pred = []
+        para_sent_ids = []
+
+        # Evaluate paraphrase detection.
+        for step, batch in enumerate(tqdm(paraphrase_dataloader, desc=f'eval', disable=TQDM_DISABLE)):
+            (b_ids1, b_mask1,
+             b_ids2, b_mask2,
+             b_labels, b_sent_ids) = (batch['token_ids_1'], batch['attention_mask_1'],
+                          batch['token_ids_2'], batch['attention_mask_2'],
+                          batch['labels'], batch['sent_ids'])
+
+            b_ids1 = b_ids1.to(device)
+            b_mask1 = b_mask1.to(device)
+            b_ids2 = b_ids2.to(device)
+            b_mask2 = b_mask2.to(device)
+
+            logits = model.predict_paraphrase(b_ids1, b_mask1, b_ids2, b_mask2)
+            y_hat = logits.sigmoid().round().flatten().cpu().numpy()
+            b_labels = b_labels.flatten().cpu().numpy()
+
+            para_y_pred.extend(y_hat)
+            para_y_true.extend(b_labels)
+            para_sent_ids.extend(b_sent_ids)
+
+        paraphrase_accuracy = np.mean(np.array(para_y_pred) == np.array(para_y_true))
+
+        print(f'Paraphrase detection accuracy: {paraphrase_accuracy:.3f}')
+
+        return (paraphrase_accuracy, para_y_pred, para_sent_ids)
+    
+# Evaluate a multitask model for accuracy.on STS only.
+def model_eval_sts(sts_dataloader, model, device):
+    model.eval()  # switch to eval model, will turn off randomness like dropout
+
+    with torch.no_grad():
+        sts_y_true = []
+        sts_y_pred = []
+        sts_sent_ids = []
+
+        # Evaluate paraphrase detection.
+        for step, batch in enumerate(tqdm(sts_dataloader, desc=f'eval', disable=TQDM_DISABLE)):
+            (b_ids1, b_mask1,
+             b_ids2, b_mask2,
+             b_labels, b_sent_ids) = (batch['token_ids_1'], batch['attention_mask_1'],
+                          batch['token_ids_2'], batch['attention_mask_2'],
+                          batch['labels'], batch['sent_ids'])
+
+            b_ids1 = b_ids1.to(device)
+            b_mask1 = b_mask1.to(device)
+            b_ids2 = b_ids2.to(device)
+            b_mask2 = b_mask2.to(device)
+
+            logits = model.predict_similarity(b_ids1, b_mask1, b_ids2, b_mask2)
+            y_hat = logits.flatten().cpu().numpy()
+            b_labels = b_labels.flatten().cpu().numpy()
+
+            sts_y_pred.extend(y_hat)
+            sts_y_true.extend(b_labels)
+            sts_sent_ids.extend(b_sent_ids)
+        pearson_mat = np.corrcoef(sts_y_pred,sts_y_true)
+        sts_corr = pearson_mat[1][0]
+
+        print(f'Similarity correlation: {sts_corr:.3f}')
+
+        return (sts_corr, sts_y_pred, sts_sent_ids)
 
 # Perform model evaluation in terms by averaging accuracies across tasks.
 def model_eval_multitask(sentiment_dataloader,
@@ -238,7 +311,7 @@ def test_model_multitask(args, model, device):
 
         sst_test_dataloader = DataLoader(sst_test_data, shuffle=True, batch_size=args.batch_size,
                                          collate_fn=sst_test_data.collate_fn)
-        sst_dev_dataloader = DataLoader(sst_dev_data, shuffle=False, batch_size=args.batch_size,
+        sst_dev_dataloader = DataLoader(sst_dev_data, shuffle=True, batch_size=args.batch_size,
                                         collate_fn=sst_dev_data.collate_fn)
 
         para_test_data = SentencePairTestDataset(para_test_data, args)
@@ -246,7 +319,7 @@ def test_model_multitask(args, model, device):
 
         para_test_dataloader = DataLoader(para_test_data, shuffle=True, batch_size=args.batch_size,
                                           collate_fn=para_test_data.collate_fn)
-        para_dev_dataloader = DataLoader(para_dev_data, shuffle=False, batch_size=args.batch_size,
+        para_dev_dataloader = DataLoader(para_dev_data, shuffle=True, batch_size=args.batch_size,
                                          collate_fn=para_dev_data.collate_fn)
 
         sts_test_data = SentencePairTestDataset(sts_test_data, args)
@@ -254,7 +327,7 @@ def test_model_multitask(args, model, device):
 
         sts_test_dataloader = DataLoader(sts_test_data, shuffle=True, batch_size=args.batch_size,
                                          collate_fn=sts_test_data.collate_fn)
-        sts_dev_dataloader = DataLoader(sts_dev_data, shuffle=False, batch_size=args.batch_size,
+        sts_dev_dataloader = DataLoader(sts_dev_data, shuffle=True, batch_size=args.batch_size,
                                         collate_fn=sts_dev_data.collate_fn)
 
         dev_paraphrase_accuracy, dev_para_y_pred, dev_para_sent_ids, \

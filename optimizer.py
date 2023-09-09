@@ -43,7 +43,10 @@ class AdamW(Optimizer):
                 state = self.state[p]
 
                 # Access hyperparameters from the `group` dictionary
-                alpha = group["lr"]
+                alpha = group["lr"]         # twitch-able
+                beta1, beta2 = group["betas"]
+                eps = group["eps"]
+                weight_decay = group["weight_decay"]
 
                 # Complete the implementation of AdamW here, reading and saving
                 # your state in the `state` dictionary above.
@@ -59,7 +62,27 @@ class AdamW(Optimizer):
                 #    (incorporating the learning rate again).
 
                 ### TODO
-                raise NotImplementedError
+                # State initialization
+                if len(state) == 0:
+                    state["step"] = 0
+                    state["first_moment_vec"] = torch.zeros_like(p, memory_format = torch.preserve_format)
+                    state["second_moment_vec"] = torch.zeros_like(p, memory_format = torch.preserve_format)
 
+                first_moment_vec = state["first_moment_vec"]
+                second_moment_vec = state["second_moment_vec"]
+                state["step"] += 1
+                step = state["step"]
+
+                # Update first and second moments
+                first_moment_vec.mul_(beta1).add_(grad, alpha=1-beta1)
+                second_moment_vec.mul_(beta2).addcmul_(grad, grad, value=1-beta2)
+
+                # Efficient version: instead of computing bias-correct moments, update alpha (step size) and theta (parameter p) directly
+                alpha_t = alpha * (math.sqrt(1 - (beta2 ** step)) / (1 - (beta1 ** step)))
+                denom = second_moment_vec.sqrt().add_(eps)
+                p.data.addcdiv_(first_moment_vec, denom, value=-alpha_t)
+
+                # Update p again using weight decay
+                p.data.mul_(1 - alpha * weight_decay)
 
         return loss
